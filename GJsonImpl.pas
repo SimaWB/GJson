@@ -2,8 +2,6 @@ unit GJsonImpl;
 
 interface
 
-{$DEFINE UNICODE}
-
 uses
   SysUtils, Windows, Classes, ActiveX, GJsonIntf;
 
@@ -48,12 +46,9 @@ type
     function Implementor: Pointer;
 
     procedure Parse(const JsonStr: JsonString); virtual;
-    procedure ParseStream(AStream: IStream; const Utf8: Boolean = False); virtual;
-    procedure ParseFile(const AFileName: JsonString; const Utf8: Boolean = False); virtual;
 
     function  Stringify: JsonString; virtual;
     function  SaveToStream(AStream: IStream): Integer;
-    procedure SaveToFile(const AFileName: JsonString; const AEncode: JsonString = ''); virtual;
 
     procedure Assign(const Source: IJsonBase); virtual; abstract;
     function  CalcSize(): Integer;
@@ -378,12 +373,32 @@ function _SV(const AStr: JsonString = '{}'): IJsonValue;
 function _SO(const AStr: JsonString = '{}'): IJsonObject;
 function _SA(const AStr: JsonString = '[]'): IJsonArray;
 
-function _SVFile(const AFileName: JsonString): IJsonValue;
 function _SASplit(Str: JsonString; const separator: JsonChar; howmany: Integer = 0): IJsonArray;
 
 function _StrToUnicode(const str: WideString): WideString;
 
 implementation
+
+
+function TryStrToInt64(const S: string; out Value: Int64): Boolean;
+begin
+  try
+    Value := StrToInt64(S);
+    Result := True;
+  except
+    Result := False;
+  end;
+end;
+
+function TryStrToFloat(const S: string; out Value: Extended): Boolean;
+begin
+  try
+    Value := StrToFloat(S); 
+    Result := True;
+  except
+    Result := False;
+  end;   
+end;
 
 function _SV(const AStr: JsonString = '{}'): IJsonValue;
 begin
@@ -401,11 +416,6 @@ begin
   Result := _SV(AStr).A;
 end;
 
-function _SVFile(const AFileName: JsonString): IJsonValue;
-begin
-  Result := _SV();
-  Result.ParseFile(AFileName);
-end;
 
 function _SASplit(Str: JsonString; const separator: JsonChar; howmany: Integer = 0): IJsonArray;
 var
@@ -502,18 +512,9 @@ begin
 end;
 
 function _IndentSpace(const AIndent: Integer): JsonString;
-{$IFDEF UNICODE}
-var
-  i: Integer;
-{$ENDIF}
 begin
   SetLength(Result, AIndent);
-  {$IFDEF UNICODE}
-  for i := 1 to AIndent do
-    Result[i] := ' ';
-  {$ELSE}
-  FillChar(Result[1], AIndent * JsonCharSize, ' '); 
-  {$ENDIF}
+  FillChar(Result[1], AIndent * JsonCharSize, ' ');
 end;
 
 function _JsonArrayCompare(const Value1, Value2: IJsonValue; const Key: JsonString; CaseSensitive: Boolean): Integer;
@@ -535,7 +536,7 @@ begin
     flags := 0
   else
     flags := NORM_IGNORECASE;
-  Result := CompareStringW(LOCALE_USER_DEFAULT, flags, PJsonChar(s1), Length(s1), PJsonChar(s2), Length(s2)) - 2;
+  Result := CompareStringA(LOCALE_USER_DEFAULT, flags, PJsonChar(s1), Length(s1), PJsonChar(s2), Length(s2)) - 2;
 end;
 
 function _JsonArrayIndexOfCompare(const Value: IJsonValue; const Value2: WideString; const Key: JsonString; CaseSensitive: Boolean): Integer;
@@ -551,7 +552,7 @@ begin
     flags := 0
   else
     flags := NORM_IGNORECASE;
-  Result := CompareStringW(LOCALE_USER_DEFAULT, flags, PJsonChar(s1), Length(s1), PJsonChar(Value2), Length(Value2)) - 2;
+  Result := CompareStringA(LOCALE_USER_DEFAULT, flags, PJsonChar(s1), Length(s1), PJsonChar(Value2), Length(Value2)) - 2;
 end;
 
 { TJsonBase }
@@ -589,13 +590,8 @@ function TJsonBase.Decode(const P: PJsonChar; const Len: Integer): JsonString;
   function HexToUnicode(const Hex: PJsonChar): JsonString;
   begin
     try
-      {$IFDEF UNICODE}
-      Result := JsonChar((HexValue(Hex[0]) shl 12) + (HexValue(Hex[1]) shl 8) +
-        (HexValue(Hex[2]) shl 4) + HexValue(Hex[3]));
-      {$ELSE}
       Result := WideChar((HexValue(Hex[0]) shl 12) + (HexValue(Hex[1]) shl 8) +
         (HexValue(Hex[2]) shl 4) + (HexValue(Hex[3]) shl 0));
-      {$ENDIF}    
     except
       raise EJsonException.Create('Illegal four-hex-digits "' + Hex + '"');
     end;
@@ -754,107 +750,6 @@ begin
   end;
 end;
 
-procedure TJsonBase.ParseFile(const AFileName: JsonString; const Utf8: Boolean);
-var
-  fs: TFileStream;
-begin
-  fs := TFileStream.Create(AFileName, fmOpenRead);
-  try
-    ParseStream(TStreamAdapter.Create(fs), Utf8);
-  finally
-    fs.Free;
-  end;
-end;
-
-{$IFDEF UNICODE}
-function GetFileStr(const AStream: IStream; const IsUtf8: Boolean): WideString;
-var
-  bom: array[0..2] of Byte;
-  buffer: array of AnsiChar;
-  iSize: Integer;
-  newPos: Int64;
-  codePage: Cardinal;
-  statstg: TStatStg;
-begin
-  AStream.Stat(statstg, 0);
-  if statstg.cbSize >= 3 then
-    AStream.Read(@bom, sizeof(bom), nil)
-  else
-    ZeroMemory(@bom[0], SizeOf(bom));
-  if (bom[0] = $FF) and (bom[1] = $FE) then  //unicode
-  begin
-    AStream.Seek(2, STREAM_SEEK_SET, newPos);
-    SetLength(Result, (statstg.cbSize-newPos) div 2);
-    AStream.Read(PWideChar(Result), statstg.cbSize-newPos, nil);
-  end
-  else
-  begin  //Ansi or utf8
-    if (bom[0] = $EF) and (bom[1] = $BB) and (bom[2] = $BF) then  //utf-8
-    begin
-      AStream.Seek(3, STREAM_SEEK_SET, newPos);
-      codePage := CP_UTF8;
-    end
-    else
-    begin
-      AStream.Seek(0, STREAM_SEEK_SET, newPos);
-      if IsUtf8 then
-        codePage := CP_UTF8
-      else
-        codePage := CP_ACP;
-    end;
-    SetLength(buffer, (statstg.cbSize-newPos));
-    AStream.Read(@buffer[0], statstg.cbSize-newPos, nil);
-    iSize := MultiByteToWideChar(codePage, 0, @buffer[0], Length(buffer), nil, 0);
-    if iSize <= 0 then
-      Exit;
-    SetLength(Result, iSize);
-    MultiByteToWideChar(codePage, 0, @buffer[0], Length(buffer), PWideChar(Result), iSize);
-  end;
-end;
-{$ELSE}
-function GetFileStr(const AStream: IStream; const IsUtf8: Boolean): AnsiString;
-var
-  bom: array[0..2] of Byte;
-  bufferw: array of WideChar;
-  iSize: Integer;
-  newPos: Int64;
-  statstg: TStatStg;
-begin
-  AStream.Stat(statstg, 0);
-  if statstg.cbSize >= 3 then
-    AStream.Read(@bom, sizeof(bom), nil)
-  else
-    ZeroMemory(@bom[0], SizeOf(bom));
-  if (bom[0] = $FF) and (bom[1] = $FE) then  //unicode
-  begin
-    AStream.Seek(2, STREAM_SEEK_SET, newPos);
-    SetLength(bufferw, (statstg.cbSize-newPos) div 2);
-    AStream.Read(@bufferw[0], statstg.cbSize-newPos, nil);
-    iSize := WideCharToMultiByte(CP_ACP, 0, @bufferw[0], Length(bufferw), nil, 0, nil, nil);
-    if iSize <= 0 then
-      Exit;
-    SetLength(Result, iSize);
-    WideCharToMultiByte(CP_ACP, 0, @bufferw[0], Length(bufferw), PAnsiChar(Result), iSize, nil, nil);
-  end
-  else
-  begin  //Ansi or utf8
-    if (bom[0] = $EF) and (bom[1] = $BB) and (bom[2] = $BF) then  //utf-8
-      AStream.Seek(3, STREAM_SEEK_SET, newPos)
-    else
-      AStream.Seek(0, STREAM_SEEK_SET, newPos);
-    SetLength(Result, (statstg.cbSize-newPos) div 2);
-    AStream.Read(PAnsiChar(Result), statstg.cbSize-newPos, nil);
-    if IsUtf8 then
-      Result := Utf8ToAnsi(Result);
-  end;
-end;
-{$ENDIF}
-
-procedure TJsonBase.ParseStream(AStream: IStream; const Utf8: Boolean);
-begin
-  Parse(GetFileStr(AStream, Utf8));
-end;
-
 procedure TJsonBase.RaiseAssignError(Source: TObject);
 var
   SourceClassName: JsonString;
@@ -863,7 +758,7 @@ begin
     SourceClassName := Source.ClassName
   else
     SourceClassName := 'nil';
-  RaiseError({$IFDEF UNICODE}WideFormat{$ELSE}Format{$ENDIF}('assign error: %s to %s', [SourceClassName, ClassName]));
+  RaiseError(Format('assign error: %s to %s', [SourceClassName, ClassName]));
 end;
 
 procedure TJsonBase.RaiseError(const Msg: JsonString);
@@ -873,50 +768,7 @@ end;
 
 procedure TJsonBase.RaiseParseError(const JsonString: JsonString);
 begin
-  RaiseError({$IFDEF UNICODE}WideFormat{$ELSE}Format{$ENDIF}('parse error: %s', [JsonString]))
-end;
-
-procedure TJsonBase.SaveToFile(const AFileName: JsonString; const AEncode: JsonString);
-var
-  ms: TMemoryStream;
-  fs: TFileStream;
-  sHeaderStr: {$IF CompilerVersion > 18.5}RawByteString{$ELSE}AnsiString{$IFEND};
-  sRawStr: {$IF CompilerVersion > 18.5}RawByteString{$ELSE}AnsiString{$IFEND};
-begin
-  if (AEncode = '') or (AEncode = 'utf-8') or (AEncode = 'utf8') then
-  begin
-    if (AEncode = 'utf-8') or (AEncode = 'utf8') then
-      sRawStr := #$EF#$BB#$BF + {$IFDEF UNICODE}UTF8Encode{$ELSE}AnsiToUtf8{$ENDIF}(Self.Stringify)
-    else
-      sRawStr := {$IFDEF UNICODE}AnsiString(Self.Stringify){$ELSE}Self.Stringify{$ENDIF};
-    fs := TFileStream.Create(AFileName, fmCreate or fmOpenWrite or fmShareExclusive);
-    try
-      fs.Write(PAnsiChar(sRawStr)^, Length(sRawStr))
-    finally
-      fs.Free;
-    end;   
-  end
-  else
-  if AEncode = 'unicode' then
-  begin
-    ms := TMemoryStream.Create();
-    try
-      sHeaderStr := #$FF#$FE;
-      ms.Write(sHeaderStr[1], 2);
-      {$IFDEF UNICODE}
-      SaveToStream(TStreamAdapter.Create(ms));
-      {$ELSE}
-      sRawStr := Self.Stringify;
-      ms.Size := ms.Position + Length(sRawStr) * 2;
-      StringToWideChar(sRawStr, PWideChar(PAnsiChar(ms.Memory) + ms.Position), ms.Size-ms.Position);
-      {$ENDIF}
-      ms.SaveToFile(AFileName);
-    finally
-      ms.Free;
-    end;  
-  end
-  else
-    RaiseError('Can not support ' + AEncode + ' encode!');
+  RaiseError(Format('parse error: %s', [JsonString]))
 end;
 
 procedure TJsonBase.SetIndentOption(const Value: TIndentOption);

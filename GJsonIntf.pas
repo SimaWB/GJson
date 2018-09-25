@@ -2,24 +2,16 @@ unit GJsonIntf;
 
 interface
 
-{$DEFINE UNICODE}
-
 uses
   ActiveX;
 
 type
   TJsonValueType = (jvNull, jvString, jvRawString, jvInteger, jvDouble, jvBoolean,
     jvObject, jvArray, jvMethod);
-    
-  {$IFDEF UNICODE}
-  JsonString = WideString;
-  JsonChar   = WideChar;
-  PJsonChar  = PWideChar;
-  {$ELSE}
+
   JsonString = AnsiString;
   JsonChar   = AnsiChar;
   PJsonChar  = PAnsiChar;
-  {$ENDIF}
 
   PPJsonHashItem = ^PJsonHashItem;
   PJsonHashItem = ^TJsonHashItem;
@@ -32,6 +24,7 @@ type
 const
   JsonCharSize   = SizeOf(JsonChar);
   JsonIndentSize =  2;
+  sLineBreak     = AnsiString(#13#10);
 
 type
   IJsonBase = interface;
@@ -69,12 +62,9 @@ type
     function Implementor: Pointer;
 
     procedure Parse(const JsonString: JsonString);
-    procedure ParseStream(AStream: IStream; const Utf8: Boolean = False);
-    procedure ParseFile(const AFileName: JsonString; const Utf8: Boolean = False);
 
     function  Stringify: JsonString;
     function  SaveToStream(AStream: IStream): Integer;
-    procedure SaveToFile(const AFileName: JsonString; const AEncode: JsonString = '');
 
     procedure Assign(const Source: IJsonBase);
     function  CalcSize(): Integer;
@@ -292,9 +282,6 @@ type
 function SV(const AStr: JsonString = '{}'): IJsonValue;
 function SO(const AStr: JsonString = '{}'): IJsonObject;
 function SA(const AStr: JsonString = '[]'): IJsonArray;
-function SVFile(const AFileName: JsonString): IJsonValue;
-function SOFile(const AFileName: JsonString): IJsonObject;
-function SAFile(const AFileName: JsonString): IJsonArray;
 function SASplit(const Str: JsonString; const separator: JsonChar; howmany: Integer = 0): IJsonArray;
 
 function StrToUnicode(const str: WideString): WideString;
@@ -317,21 +304,6 @@ end;
 function SA(const AStr: JsonString): IJsonArray;
 begin
   Result := _SA(AStr)
-end;
-
-function SVFile(const AFileName: JsonString): IJsonValue;
-begin
-  Result := _SVFile(AFileName)
-end;
-
-function SOFile(const AFileName: JsonString): IJsonObject;
-begin
-  Result := _SVFile(AFileName).O;
-end;
-
-function SAFile(const AFileName: JsonString): IJsonArray;
-begin
-  Result := _SVFile(AFileName).A;
 end;
 
 function SASplit(const Str: JsonString; const separator: JsonChar; howmany: Integer = 0): IJsonArray;
